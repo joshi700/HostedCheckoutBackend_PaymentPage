@@ -76,15 +76,14 @@ function basketFrom(items) {
   return lines.length ? lines : DEFAULT_BASKET;
 }
 
-// The shopper is sent back to returnUrl after paying. Only origins we deploy the
+// The shopper is sent to returnUrl after paying (or cancelUrl from Back). Only origins we deploy the
 // frontend to are accepted, so the backend can't be used to redirect elsewhere.
 const ALLOWED_RETURN_ORIGINS = (process.env.ALLOWED_RETURN_ORIGINS ||
   "https://hosted-checkout-indol.vercel.app,http://localhost:3000")
   .split(",").map((o) => o.trim()).filter(Boolean);
 const PREVIEW_ORIGIN = /^https:\/\/hosted-checkout-[a-z0-9-]+\.vercel\.app$/;
 
-function returnUrlFrom(requested) {
-  const fallback = process.env.RETURN_URL || "https://hosted-checkout-indol.vercel.app/ReceiptPage";
+function allowedUrl(requested, fallback) {
   try {
     const url = new URL(requested);
     if (ALLOWED_RETURN_ORIGINS.includes(url.origin) || PREVIEW_ORIGIN.test(url.origin)) return url.toString();
@@ -92,10 +91,18 @@ function returnUrlFrom(requested) {
   return fallback;
 }
 
+const returnUrlFrom = (requested) =>
+  allowedUrl(requested, process.env.RETURN_URL || "https://hosted-checkout-indol.vercel.app/ReceiptPage");
+
+// Where the Payment Page's Back/cancel link sends the shopper. Same allow-list
+// as returnUrl; without one the gateway falls back to the merchant's own URL.
+const cancelUrlFrom = (requested) =>
+  allowedUrl(requested, process.env.CANCEL_URL || "https://hosted-checkout-indol.vercel.app/?cancelled=1");
+
 const cents = (n) => Math.round(n * 100);
 const dollars = (c) => (c / 100).toFixed(2);
 
-function buildCheckout({ orderId, returnUrl, basket }) {
+function buildCheckout({ orderId, returnUrl, cancelUrl, basket }) {
   const itemCents = basket.reduce((n, i) => n + cents(i.unitPrice) * i.quantity, 0);
   const taxCents = 0;
 
@@ -113,6 +120,7 @@ function buildCheckout({ orderId, returnUrl, basket }) {
       },
       locale: "en_US",
       returnUrl,
+      cancelUrl,
     },
     order: {
       id: orderId,
@@ -148,6 +156,7 @@ app.post('/', async (req, res) => {
     const postData = buildCheckout({
       orderId: orderid,
       returnUrl: returnUrlFrom(body.returnUrl),
+      cancelUrl: cancelUrlFrom(body.cancelUrl),
       basket: basketFrom(body.items),
     });
 
